@@ -2,11 +2,9 @@ use fs_extra::dir::CopyOptions;
 use std::error::Error;
 use std::fs::{self, File};
 use std::io::{self, Write};
-use std::mem::forget;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tempfile::{tempdir, NamedTempFile};
 use xz2::write::XzEncoder;
 use zstd::stream::write::Encoder;
 
@@ -50,59 +48,64 @@ fn find_system_loader() -> Option<PathBuf> {
     None
 }
 
-fn create_compressed_payload(staging_root: &Path, target_name: &str, compression: &str, level: i32) -> Result<PathBuf, Box<dyn Error>> {
-    println!("\n[Packaging] Starting TAR archiving and {} compression (level {})...", compression.to_uppercase(), level);
+fn create_temp_dir(base_name: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let path = std::env::temp_dir().join(format!("{}_bundle", base_name));
+    if path.exists() { fs::remove_dir_all(&path)?; }
+    fs::create_dir_all(&path)?;
+    Ok(path)
+}
 
-    let payload_file = NamedTempFile::new()?;
-    let payload_path = payload_file.path().to_path_buf();
-    let file_writer = File::create(&payload_path)?;
-    forget(payload_file);
+fn create_compressed_payload(path: &Path, target: &str, cmp: &str, l: i32) -> Result<PathBuf, Box<dyn Error>> {
+    println!("\n[Packaging] Starting TAR archiving and {} compression (level {})...", cmp, l);
 
-    let encoder: Box<dyn Write> = match compression.to_lowercase().as_str() {
+    let tmp_dir = std::env::temp_dir().join(format!("{}_bundle_tmp", target));
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir)?;
+    }
+    fs::create_dir_all(&tmp_dir)?;
+
+    let payload = tmp_dir.join(format!("{}.tar.{}", target, cmp));
+    let file_writer = File::create(&payload)?;
+
+    let encoder: Box<dyn Write> = match cmp {
         "zstd" => {
-            let mut enc = Encoder::new(file_writer, level)?;
+            let mut enc = Encoder::new(file_writer, l)?;
             enc.long_distance_matching(true)?;
             Box::new(enc.auto_finish())
         }
         "xz" => {
-            let xz_enc = XzEncoder::new(file_writer, level as u32);
-            Box::new(xz_enc)
+            let enc = XzEncoder::new(file_writer, l as u32);
+            Box::new(enc)
         }
         other => return Err(format!("Unknown compression format: {}", other).into()),
     };
 
-    let bundle_dir_name = format!("{}_bundle", target_name);
-    let mut tar_builder = tar::Builder::new(encoder);
-    tar_builder.append_dir_all(&bundle_dir_name, staging_root)?;
-    drop(tar_builder);
+    let bundle_dir_name = format!("{}_bundle", target);
+    let mut builder = tar::Builder::new(encoder);
+    builder.append_dir_all(&bundle_dir_name, path)?;
+    fs::remove_dir_all(&tmp_dir)?;
 
-    Ok(payload_path)
+    Ok(payload)
 }
 
-fn get_dynamic_dependencies(binary_path: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+fn get_dynamic_dependencies(binary: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
     println!("[Generator] Attempting to detect dynamic dependencies (ldd)...");
 
-    if !binary_path.exists() {
-        return Err(format!("Binary not found at: {}", binary_path.display()).into());
+    if !binary.exists() {
+        return Err(format!("Binary not found at: {}", binary.display()).into());
     }
 
-    let output = Command::new("ldd").arg(binary_path).output();
+    let output = Command::new("ldd").arg(binary).output().ok();
 
-    let output = match output {
-        Ok(out) => out,
-        Err(e) => {
-            eprintln!("[Generator Warning] Failed to run 'ldd': {}", e);
-            return Ok(Vec::new());
-        }
-    };
-
-    if !output.status.success() {
-        eprintln!("[Generator Warning] 'ldd' exited with code {}", output.status);
-        return Ok(Vec::new());
+    if output.as_ref().map_or(true, |out| !out.status.success()) {
+        eprintln!("[Generator Warning] Failed to run or 'ldd' exited with error");
+        return Err("ldd failed".into());
     }
+
+    let output = output.unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut dependencies = Vec::new();
+    let mut deps = Vec::new();
 
     for line in stdout.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -110,14 +113,14 @@ fn get_dynamic_dependencies(binary_path: &Path) -> Result<Vec<PathBuf>, Box<dyn 
             if let Some(path_str) = parts.iter().skip_while(|&p| *p != "=>").nth(1) {
                 let path = PathBuf::from(path_str.trim());
                 if path.exists() && !path_str.contains("ld-linux") && !path_str.contains("ld-musl") {
-                    dependencies.push(path);
+                    deps.push(path);
                 }
             }
         }
     }
 
-    println!("[Generator] Successfully detected: {} dependencies", dependencies.len());
-    Ok(dependencies)
+    println!("[Generator] Successfully detected: {} dependencies", deps.len());
+    Ok(deps)
 }
 
 fn copy_bin_and_deps(file_path: &Path, bin_dir: &Path, libs_dir: &Path) -> Result<(), Box<dyn Error>> {
@@ -147,6 +150,7 @@ fn copy_bin_and_deps(file_path: &Path, bin_dir: &Path, libs_dir: &Path) -> Resul
 
 pub fn generate_bundle(args: BundleArgs) ->  Result<(), Box<dyn Error>> {
     let target_binary = &args.target_binary;
+    let target_name = target_binary.file_name().unwrap().to_str().unwrap();
     let cwd = std::env::current_dir()?;
 
     let mut final_libs = Vec::new();
@@ -163,8 +167,8 @@ pub fn generate_bundle(args: BundleArgs) ->  Result<(), Box<dyn Error>> {
 
     println!("\n[Staging] Creating temporary staging directory...");
 
-    let staging_dir = tempdir()?;
-    let root_path = staging_dir.path();
+    let staging_dir = create_temp_dir(&target_name)?;
+    let root_path = staging_dir.as_path();
     let bin_dir = root_path.join("bins");
     let libs_dir = root_path.join("libs");
 
@@ -180,8 +184,8 @@ pub fn generate_bundle(args: BundleArgs) ->  Result<(), Box<dyn Error>> {
     }
 
     println!("[Staging] Copying target binary...");
-    let target_file_name = target_binary.file_name().unwrap();
-    fs::copy(target_binary, root_path.join(target_file_name))?;
+
+    fs::copy(target_binary, root_path.join(target_name))?;
 
     if !args.extra_bins.is_empty() {
         println!("[Staging] Processing {} extra binaries/folders...", args.extra_bins.len());
@@ -207,15 +211,10 @@ pub fn generate_bundle(args: BundleArgs) ->  Result<(), Box<dyn Error>> {
     }
 
     println!("[Staging] Copying additional files...");
-    let mut extra_paths = Vec::new();
-    for entry in &args.additional_files {
-        let entry_path = cwd.join(entry);
-        if entry_path.exists() {
-            extra_paths.push(entry_path);
-        } else {
-            eprintln!("[Warning] Additional path not found: {}", entry);
-        }
-    }
+    let extra_paths: Vec<_> = args.additional_files.iter().filter_map(|e| {
+            let p = cwd.join(e);
+            if p.exists() { Some(p) } else { None }
+        }).collect();
 
     if !extra_paths.is_empty() {
         let options = CopyOptions::new();
@@ -223,15 +222,13 @@ pub fn generate_bundle(args: BundleArgs) ->  Result<(), Box<dyn Error>> {
         fs_extra::copy_items(&entry_refs, root_path, &options)?;
     }
 
-    let target_name = target_file_name.to_string_lossy().to_string();
     let compressed_payload_path = create_compressed_payload(root_path, &target_name, &args.compression, args.compression_level)?;
     let payload_size = compressed_payload_path.metadata()?.len();
 
     println!("\n[Output] Creating final bundle file: {}", args.output.display());
 
-    let current_exe = std::env::current_exe()?;
-    
-    fs::copy(&current_exe, &args.output)?;
+    let exec = std::env::current_exe()?;
+    fs::copy(&exec, &args.output)?;
 
     #[cfg(unix)]
     {
@@ -251,15 +248,13 @@ pub fn generate_bundle(args: BundleArgs) ->  Result<(), Box<dyn Error>> {
         _ => 99,
     };
 
-    let target_bin_name = target_file_name.to_string_lossy();
-
     let metadata = BundleMetadata {
         payload_size,
         compression_type: compression_id,
-        target_bin_name_len: target_bin_name.len() as u32,
+        target_bin_name_len: target_name.len() as u32,
     };
 
-    final_file.write_all(target_bin_name.as_bytes())?;
+    final_file.write_all(target_name.as_bytes())?;
 
     let metadata_bytes = unsafe {
         std::slice::from_raw_parts(&metadata as *const BundleMetadata as *const u8,
@@ -269,10 +264,11 @@ pub fn generate_bundle(args: BundleArgs) ->  Result<(), Box<dyn Error>> {
     final_file.write_all(&MAGIC_MARKER)?;
 
     fs::remove_file(&compressed_payload_path).ok();
+    fs::remove_dir_all(&staging_dir).ok();
 
     println!("\n[Generator Success]");
     println!("  Payload Size: {} bytes", payload_size);
-    println!("  Metadata Size: {} bytes", size_of::<BundleMetadata>() + target_bin_name.len() + MAGIC_MARKER.len());
+    println!("  Metadata Size: {} bytes", size_of::<BundleMetadata>() + target_name.len() + MAGIC_MARKER.len());
     println!("  Compressed Bundle created at: {}", args.output.display());
     Ok(())
 }

@@ -1,14 +1,11 @@
 use std::error::Error;
+use std::fs;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path};
-use tempfile::tempdir;
 use std::mem::size_of;
 use xz2::read::XzDecoder;
 use std::process::Command;
-
-#[cfg(debug_assertions)]
-use std::io::Write;
 
 const MAGIC_MARKER: [u8; 10] = *b"REX_BUNDLE";
 
@@ -140,8 +137,8 @@ impl Runtime {
     }
 
     fn extract_payload(info: &PayloadInfo, dest_path: &Path) -> Result<(), Box<dyn Error>> {
-        let current_exe_path = std::env::current_exe()?;
-        let mut file = File::open(&current_exe_path)?;
+        let exec = std::env::current_exe()?;
+        let mut file = File::open(&exec)?;
         file.seek(SeekFrom::Start(info.payload_start_offset))?;
 
         let payload_reader = file.take(info.metadata.payload_size);
@@ -158,10 +155,9 @@ impl Runtime {
     }
 
     fn run_bundled_binary(&mut self, info: &PayloadInfo) -> Result<(), Box<dyn Error>> {
-        let temp_dir_handle = tempdir()?;
-        let extraction_root = temp_dir_handle.path();
+        let extraction_root = std::env::temp_dir();
 
-        Self::extract_payload(info, extraction_root)?;
+        Self::extract_payload(info, extraction_root.as_path())?;
 
         let bundle_dir = extraction_root.join(format!("{}_bundle", info.target_binary_name));
         let bin_dir = bundle_dir.join("bins");
@@ -169,6 +165,7 @@ impl Runtime {
         let target_bin_path = bundle_dir.join(&info.target_binary_name);
 
         if !target_bin_path.exists() {
+            fs::remove_dir_all(&bundle_dir).ok();
             return Err(format!("Target binary not found in bundle: {}", target_bin_path.display()).into());
         }
 
@@ -182,6 +179,7 @@ impl Runtime {
             } else if musl_loader.exists() {
                 musl_loader
             } else {
+                fs::remove_dir_all(&bundle_dir).ok();
                 return Err("No compatible loader found (ld-linux or ld-musl)".into());
             }
         };
@@ -200,12 +198,9 @@ impl Runtime {
         ];
         cmd_args.extend(args);
 
-        let result = Command::new(loader_path)
-            .args(&cmd_args)
-            .current_dir(bin_dir)
-            .status();
-
+        let result = Command::new(loader_path).args(&cmd_args).current_dir(bin_dir).status();
         self.executed = true;
+        fs::remove_dir_all(&bundle_dir).ok();
 
         match result {
             Ok(status) if status.success() => Ok(()),
@@ -216,13 +211,5 @@ impl Runtime {
 
     pub fn has_run(&self) -> bool {
         self.executed
-    }
-
-    #[cfg(debug_assertions)]
-    fn _pause() {
-        println!("Pressione ENTER para continuar...");
-        let _ = std::io::stdout().flush();
-        let mut buffer = String::new();
-        let _ =  std::io::stdin().read_line(&mut buffer);
     }
 }

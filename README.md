@@ -1,5 +1,5 @@
  
-# Rex — Self-contained Binary Bundler (README)
+# Rex - Static Rust Executable Generator and Runtime
 
 **Rex** is a small Rust project that packs a target binary together with its
 dynamic libraries, extra binaries and files into a single executable.
