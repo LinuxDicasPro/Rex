@@ -4,19 +4,17 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path};
 use std::mem::size_of;
-use xz2::read::XzDecoder;
 use std::process::Command;
 
 const MAGIC_MARKER: [u8; 10] = *b"REX_BUNDLE";
 
-#[repr(C)]
+#[repr(C, packed)]
 struct BundleMetadata {
     payload_size: u64,
-    compression_type: u32,
     target_bin_name_len: u32,
 }
 
-const _: () = assert!(size_of::<BundleMetadata>() == 16);
+const _: () = assert!(size_of::<BundleMetadata>() == 12);
 
 struct PayloadInfo {
     metadata: BundleMetadata,
@@ -33,14 +31,11 @@ fn print_help() {
     println!(r#"Rex Runtime - Self-contained binary runner
 
 Usage:
-  ./program [options]
+  ./program [parms]
 
-Options:
-  --rex-help
-      Show this help message
-
-  --rex-extract
-      Extract the embedded bundle to the current directory"#
+Extra Options:
+  --rex-help     Show this help message
+  --rex-extract  Extract the embedded bundle to the current directory"#
     );
 }
 
@@ -64,15 +59,14 @@ impl Runtime {
                     return Ok(());
                 }
                 "--rex-extract" => {
-                    return if let Some(info) = &self.payload_info {
+                    if let Some(info) = &self.payload_info {
                         let current_dir = std::env::current_dir()?;
                         println!("[rex] Extracting bundle to {}", current_dir.display());
                         Self::extract_payload(info, &current_dir)?;
                         println!("[rex] Extraction completed successfully!");
-                        Ok(())
-                    } else {
-                        Err("No payload found in the executable.".into())
+                        return Ok(())
                     }
+                    return Err("No payload found in the executable.".into())
                 }
                 _ => {}
             }
@@ -85,8 +79,8 @@ impl Runtime {
     }
 
     fn find_payload_info() -> Result<Option<PayloadInfo>, Box<dyn Error>> {
-        let current_exe_path = std::env::current_exe()?;
-        let mut file = File::open(&current_exe_path)?;
+        let exec = std::env::current_exe()?;
+        let mut file = File::open(&exec)?;
         let file_size = file.metadata()?.len();
 
         const FIXED_METADATA_SIZE: u64 = size_of::<BundleMetadata>() as u64 + MAGIC_MARKER.len() as u64;
@@ -113,15 +107,10 @@ impl Runtime {
 
         let metadata = BundleMetadata {
             payload_size: u64::from_le_bytes(metadata_bytes[0..8].try_into().unwrap()),
-            compression_type: u32::from_le_bytes(metadata_bytes[8..12].try_into().unwrap()),
-            target_bin_name_len: u32::from_le_bytes(metadata_bytes[12..16].try_into().unwrap()),
+            target_bin_name_len: u32::from_le_bytes(metadata_bytes[8..12].try_into().unwrap()),
         };
 
         let name_len = metadata.target_bin_name_len as usize;
-        if name_len == 0 {
-            return Err("Structure mismatch: Target binary name length is zero.".into());
-        }
-
         let name_start = metadata_start.checked_sub(name_len as u64).unwrap();
         file.seek(SeekFrom::Start(name_start))?;
 
@@ -142,12 +131,7 @@ impl Runtime {
         file.seek(SeekFrom::Start(info.payload_start_offset))?;
 
         let payload_reader = file.take(info.metadata.payload_size);
-
-        let decoder: Box<dyn Read> = match info.metadata.compression_type {
-            0 => Box::new(zstd::Decoder::new(payload_reader)?),
-            1 => Box::new(XzDecoder::new(payload_reader)),
-            id => return Err(format!("Unknown compression ID: {id}").into()),
-        };
+        let decoder: Box<dyn Read> = Box::new(zstd::Decoder::new(payload_reader)?);
 
         let mut archive = tar::Archive::new(decoder);
         archive.unpack(dest_path)?;

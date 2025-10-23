@@ -1,2 +1,7 @@
+Thu Oct 23 20:19:24 -03 2025:
+    - upload version 1.1.0
+    - refactoty code
+    - use only zstd
+    - remove parameters --compression --output for clean code
 Tue Oct 21 08:04:09 -03 2025:
-    - Upload version 1.0.0
+    - upload version 1.0.0

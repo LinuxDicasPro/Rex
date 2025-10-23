@@ -5,7 +5,6 @@ use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use xz2::write::XzEncoder;
 use zstd::stream::write::Encoder;
 
 const MAGIC_MARKER: [u8; 10] = *b"REX_BUNDLE";
@@ -13,15 +12,12 @@ const MAGIC_MARKER: [u8; 10] = *b"REX_BUNDLE";
 #[repr(C, packed)]
 struct BundleMetadata {
     payload_size: u64,
-    compression_type: u32,
     target_bin_name_len: u32,
 }
 
 #[derive(Debug)]
 pub struct BundleArgs {
     pub target_binary: PathBuf,
-    pub output: PathBuf,
-    pub compression: String,
     pub compression_level: i32,
     pub extra_libs: Vec<PathBuf>,
     pub additional_files: Vec<String>,
@@ -31,12 +27,8 @@ pub struct BundleArgs {
 fn find_system_loader() -> Option<PathBuf> {
     let possible_paths = [
         "/lib64/ld-linux-x86-64.so.2",
-        "/usr/lib64/ld-linux-x86-64.so.2",
-        "/lib/ld-linux-x86-64.so.2",
-        "/usr/lib/ld-linux-x86-64.so.2",
-        "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
-        "/lib/ld-musl-x86_64.so.1",
-        "/usr/lib/ld-musl-x86_64.so.1"
+        "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        "/lib/ld-musl-x86_64.so.1"
     ];
 
     for path in possible_paths.iter() {
@@ -55,35 +47,25 @@ fn create_temp_dir(base_name: &str) -> Result<PathBuf, Box<dyn Error>> {
     Ok(path)
 }
 
-fn create_compressed_payload(path: &Path, target: &str, cmp: &str, l: i32) -> Result<PathBuf, Box<dyn Error>> {
-    println!("\n[Packaging] Starting TAR archiving and {} compression (level {})...", cmp, l);
-
+fn create_compressed_payload(path: &Path, target: &str, l: i32) -> Result<PathBuf, Box<dyn Error>> {
     let tmp_dir = std::env::temp_dir().join(format!("{}_bundle_tmp", target));
     if tmp_dir.exists() {
         fs::remove_dir_all(&tmp_dir)?;
     }
     fs::create_dir_all(&tmp_dir)?;
 
-    let payload = tmp_dir.join(format!("{}.tar.{}", target, cmp));
+    let payload = tmp_dir.join(format!("{target}.tar.zstd"));
     let file_writer = File::create(&payload)?;
 
-    let encoder: Box<dyn Write> = match cmp {
-        "zstd" => {
-            let mut enc = Encoder::new(file_writer, l)?;
-            enc.long_distance_matching(true)?;
-            Box::new(enc.auto_finish())
-        }
-        "xz" => {
-            let enc = XzEncoder::new(file_writer, l as u32);
-            Box::new(enc)
-        }
-        other => return Err(format!("Unknown compression format: {}", other).into()),
-    };
+    println!("\n[Packaging] Starting TAR archiving and ZSTD compression (level {l}) to:\n{}", payload.display());
+
+    let mut enc = Encoder::new(file_writer, l)?;
+    enc.long_distance_matching(true)?;
+    let encoder: Box<dyn Write> =Box::new(enc.auto_finish());
 
     let bundle_dir_name = format!("{}_bundle", target);
     let mut builder = tar::Builder::new(encoder);
     builder.append_dir_all(&bundle_dir_name, path)?;
-    fs::remove_dir_all(&tmp_dir)?;
 
     Ok(payload)
 }
@@ -222,35 +204,27 @@ pub fn generate_bundle(args: BundleArgs) ->  Result<(), Box<dyn Error>> {
         fs_extra::copy_items(&entry_refs, root_path, &options)?;
     }
 
-    let compressed_payload_path = create_compressed_payload(root_path, &target_name, &args.compression, args.compression_level)?;
+    let compressed_payload_path = create_compressed_payload(root_path, &target_name, args.compression_level)?;
     let payload_size = compressed_payload_path.metadata()?.len();
+    let out = format!("{}.Rex", args.target_binary.file_name().unwrap().display());
 
-    println!("\n[Output] Creating final bundle file: {}", args.output.display());
+    println!("\n[Output] Creating final bundle file: {}", out);
 
     let exec = std::env::current_exe()?;
-    fs::copy(&exec, &args.output)?;
+    fs::copy(&exec, &out)?;
 
-    #[cfg(unix)]
-    {
-        use std::fs::Permissions;
-        let perms = Permissions::from_mode(0o755);
-        fs::set_permissions(&args.output, perms)?;
-    }
+    use std::fs::Permissions;
 
-    let mut final_file = fs::OpenOptions::new().append(true).open(&args.output)?;
+    let perms = Permissions::from_mode(0o755);
+    fs::set_permissions(&out, perms)?;
+
+    let mut final_file = fs::OpenOptions::new().append(true).open(&out)?;
     let mut payload_file = File::open(&compressed_payload_path)?;
     
     io::copy(&mut payload_file, &mut final_file)?;
 
-    let compression_id = match args.compression.to_lowercase().as_str() {
-        "zstd" => 0,
-        "xz" => 1,
-        _ => 99,
-    };
-
     let metadata = BundleMetadata {
         payload_size,
-        compression_type: compression_id,
         target_bin_name_len: target_name.len() as u32,
     };
 
@@ -269,6 +243,6 @@ pub fn generate_bundle(args: BundleArgs) ->  Result<(), Box<dyn Error>> {
     println!("\n[Generator Success]");
     println!("  Payload Size: {} bytes", payload_size);
     println!("  Metadata Size: {} bytes", size_of::<BundleMetadata>() + target_name.len() + MAGIC_MARKER.len());
-    println!("  Compressed Bundle created at: {}", args.output.display());
+    println!("  Compressed Bundle created at: {}", out);
     Ok(())
 }

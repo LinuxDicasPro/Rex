@@ -18,16 +18,8 @@ struct Cli {
         help = "Path to the main target binary to bundle")]
     target_binary: Option<PathBuf>,
 
-    #[arg(short = 'o', long, value_name = "OUTPUT_PATH",
-        help = "Path for the generated Rex bundle")]
-    output: Option<PathBuf>,
-
-    #[arg(short = 'c', long, value_name = "COMPRESSION_TYPE", default_value = "zstd",
-        help = "Compression type to use for the payload (zstd or xz)")]
-    compression: String,
-
     #[arg(short = 'L', long, value_name = "COMPRESSION_LEVEL", default_value_t = 5,
-        help = "Compression level (1-22 for zstd, 0-9 for xz)")]
+        help = "Compression level (1-22)")]
     compression_level: i32,
 
     #[arg(short = 'l', long, value_name = "EXTRA_LIBRARIES",
@@ -51,27 +43,14 @@ fn rex_main(runtime: &mut Runtime) -> Result<(), Box<dyn Error>> {
         return runtime.run()
     }
 
-    let has_no_args = args_vec.len() == 1;
-    if has_no_args && !is_runtime {
-        let mut cmd = Cli::command();
-        cmd.print_help()?;
-        return Ok(())
+    if args_vec.len() == 1 {
+        Cli::command().print_help()?;
+        return Ok(());
     }
 
     let cli = Cli::parse();
-    let target = cli.target_binary.unwrap();
-    let final_output = match cli.output {
-        Some(p) => p,
-        None => {
-            let file_name = target.file_name().unwrap().to_str().unwrap();
-            PathBuf::from(format!("{}.Rex", file_name))
-        }
-    };
-
     let args = generator::BundleArgs {
-        target_binary: target,
-        output: final_output,
-        compression: cli.compression,
+        target_binary: cli.target_binary.unwrap(),
         compression_level: cli.compression_level,
         extra_libs: cli.extra_libs,
         extra_bins: cli.extra_bins,

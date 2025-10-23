@@ -1,5 +1,8 @@
- 
-# Rex - Static Rust Executable Generator and Runtime
+<p align="center">
+  <img src="logo.png" width="256">
+</p>
+
+<h1 align="center">Rex - Static Rust Executable Generator and Runtime</h1> 
 
 **Rex** is a small Rust project that packs a target binary together with its
 dynamic libraries, extra binaries and files into a single executable.
@@ -19,10 +22,10 @@ target program using a suitable loader (glibc or musl) when available.
 * `main.rs` — CLI entrypoint. Detects whether the executable is a runtime
 (contains a payload) or is being run as the builder. Uses `clap` for the CLI.
 * `generator.rs` — The packer/generator that creates the staging directory,
-copies binaries/libs/files, creates a tar and compresses it (zstd or xz),
+copies binaries/libs/files, creates a tar and compresses it (zstd),
 and appends the payload and metadata to the runtime executable.
 * `runtime.rs` — The runtime that scans the running executable for the metadata
-marker, extracts the payload to a temporary directory, adjusts environment
+marker extracts the payload to a temporary directory, adjusts environment
 variables and executes the embedded binary.
 
 ## Building
@@ -51,23 +54,20 @@ Run `rex` (the built binary) as a generator to create a bundle:
 # typical full command
 ./rex \
   --target-binary ./myapp \
-  --output ./myapp.Rex \
-  --compression zstd \
   --compression-level 19 \
   --extra-libs /usr/lib/x86_64-linux-gnu/libexample.so \
   --extra-bins ./helpers ./tools \
   --additional-files config.json README.md
 ```
 
-If you omit `--output`, the generator will produce `myapp.Rex`
-(target file base name + `.Rex`).
+The generator will produce `myapp.Rex` (target file base name + `.Rex`).
 
 ### Runtime flags (embedded runtime inside the produced bundle)
 
 When the generated bundle runs and contains payload, the runtime inspects
 arguments. The runtime supports:
 
-* `--rex-help` — prints a short help message (English, simplified).
+* `--rex-help` — prints a short help message.
 * `--rex-extract` — extracts the embedded bundle into the **current working directory**.
 
 If no runtime flag is given, the runtime will extract to a temporary
@@ -88,13 +88,6 @@ Inside the compressed `.tar` payload the generator creates a directory named
 
 The runtime expects exactly this layout and looks up the active bundle
 using the `target` name provided in the appended metadata.
-
-## Compression choices
-
-* `zstd` (id `0`) — default/recommended, fast and efficient. Supports higher levels.
-* `xz` (id `1`) — stronger compression but slower.
-
-The generator accepts the flags `--compression` and `--compression-level`.
 
 ## Loader handling and execution (Linux)
 
@@ -124,7 +117,7 @@ writes to the current working directory and prints progress messages.
 cargo build --release
 
 # 2) Package your app
-./target/release/rex --target-binary ./target/release/myapp --output ./myapp.Rex --compression zstd --compression-level 19
+./target/release/rex --target-binary ./target/release/myapp --compression-level 19
 
 # 3) Run the bundle
 ./myapp.Rex
@@ -136,7 +129,6 @@ Or extract files manually to inspect contents:
 ./myapp.Rex --rex-extract
 # this extracts into the current directory into 'myapp_bundle/' (or similar) depending on the target name
 ```
-
 
 ## License
 
