@@ -1,4 +1,4 @@
-use clap::{CommandFactory, Parser};
+use std::env;
 use std::path::PathBuf;
 use std::error::Error;
 use crate::runtime::Runtime;
@@ -8,49 +8,117 @@ mod runtime;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[derive(Parser, Debug)]
-#[command(name = "Rex", version = VERSION, author = "LinuxDicasPro",
-    about = "Rex - Static Rust Executable Generator and Runtime"
-)]
-
 struct Cli {
-    #[arg(short = 't', long, value_name = "TARGET_BINARY_FILE",
-        help = "Path to the main target binary to bundle")]
     target_binary: Option<PathBuf>,
-
-    #[arg(short = 'L', long, value_name = "COMPRESSION_LEVEL", default_value_t = 5,
-        help = "Compression level (1-22)")]
     compression_level: i32,
-
-    #[arg(short = 'l', long, value_name = "EXTRA_LIBRARIES",
-        help = "Additional libraries to include in libs")]
     extra_libs: Vec<PathBuf>,
-
-    #[arg(short = 'b', long, value_name = "EXTRA_BINARIES",
-        help = "Additional binaries to include in bins")]
     extra_bins: Vec<PathBuf>,
-
-    #[arg(short = 'a', long, value_name = "ADDITIONAL_FILES",
-        help = "Extra files or directories to include in the bundle")]
     additional_files: Vec<String>,
 }
 
+impl Cli {
+    fn parse() -> Result<Self, Box<dyn Error>> {
+        let mut args = env::args().skip(1);
+        let mut cli = Cli {
+            target_binary: None,
+            compression_level: 5,
+            extra_libs: Vec::new(),
+            extra_bins: Vec::new(),
+            additional_files: Vec::new(),
+        };
+
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "-t" | "--target-binary" => {
+                    if let Some(val) = args.next() {
+                        cli.target_binary = Some(PathBuf::from(val));
+                    } else {
+                        return Err("missing value for --target-binary".into());
+                    }
+                }
+                "-L" | "--compression-level" => {
+                    if let Some(val) = args.next() {
+                        cli.compression_level = val.parse::<i32>()?;
+                    } else {
+                        return Err("missing value for --compression-level".into());
+                    }
+                }
+                "-l" | "--extra-libs" => {
+                    if let Some(val) = args.next() {
+                        cli.extra_libs.push(PathBuf::from(val));
+                    } else {
+                        return Err("missing value for --extra-libs".into());
+                    }
+                }
+                "-b" | "--extra-bins" => {
+                    if let Some(val) = args.next() {
+                        cli.extra_bins.push(PathBuf::from(val));
+                    } else {
+                        return Err("missing value for --extra-bins".into());
+                    }
+                }
+                "-a" | "--additional-files" => {
+                    if let Some(val) = args.next() {
+                        cli.additional_files.push(val);
+                    } else {
+                        return Err("missing value for --additional-files".into());
+                    }
+                }
+                "-h" | "--help" => {
+                    Cli::print_help();
+                    std::process::exit(0);
+                }
+                "-v" | "--version" => {
+                    println!("Rex version {}", VERSION);
+                    std::process::exit(0);
+                }
+                other => {
+                    eprintln!("Unknown option: {}", other);
+                    Cli::print_usage();
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        Ok(cli)
+    }
+
+    fn print_usage() {
+        println!("Usage: rex [OPTIONS]");
+        println!("Try 'rex --help' for more information.");
+    }
+
+    fn print_help() {
+        println!("Rex - Static Rust Executable Generator and Runtime");
+        println!("Version: {}", VERSION);
+        println!();
+        println!("Options:");
+        println!("  -t, --target-binary <FILE>       Path to the main target binary to bundle");
+        println!("  -L, --compression-level <NUM>    Compression level (1-22, default 5)");
+        println!("  -l, --extra-libs <FILE>          Additional libraries to include");
+        println!("  -b, --extra-bins <FILE>          Additional binaries to include");
+        println!("  -a, --additional-files <PATH>    Extra files or directories to include");
+        println!("  -v, --version                    Show version information");
+        println!("  -h, --help                       Show this help message");
+    }
+}
+
 fn rex_main(runtime: &mut Runtime) -> Result<(), Box<dyn Error>> {
-    let args_vec: Vec<String> = std::env::args().collect();
+    let args_vec: Vec<String> = env::args().collect();
     let is_runtime = runtime.is_bundled();
 
     if is_runtime {
-        return runtime.run()
+        return runtime.run();
     }
 
     if args_vec.len() == 1 {
-        Cli::command().print_help()?;
+        Cli::print_help();
         return Ok(());
     }
 
-    let cli = Cli::parse();
+    let cli = Cli::parse()?;
     let args = generator::BundleArgs {
-        target_binary: cli.target_binary.unwrap(),
+        target_binary: cli.target_binary.ok_or("missing --target-binary")?,
         compression_level: cli.compression_level,
         extra_libs: cli.extra_libs,
         extra_bins: cli.extra_bins,
