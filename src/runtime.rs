@@ -2,8 +2,8 @@ use std::error::Error;
 use std::fs;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path};
 use std::mem::size_of;
+use std::path::Path;
 use std::process::Command;
 
 const MAGIC_MARKER: [u8; 10] = *b"REX_BUNDLE";
@@ -30,9 +30,6 @@ pub struct Runtime {
 fn print_help() {
     println!(r#"Rex Runtime - Self-contained binary runner
 
-Usage:
-  ./program [parms]
-
 Extra Options:
   --rex-help     Show this help message
   --rex-extract  Extract the embedded bundle to the current directory"#
@@ -42,7 +39,10 @@ Extra Options:
 impl Runtime {
     pub fn new() -> Result<Self, Box<dyn Error>> {
         let payload_info = Self::find_payload_info()?;
-        Ok(Self { payload_info, executed: false })
+        Ok(Self {
+            payload_info,
+            executed: false,
+        })
     }
 
     pub fn is_bundled(&self) -> bool {
@@ -64,18 +64,14 @@ impl Runtime {
                         println!("[rex] Extracting bundle to {}", current_dir.display());
                         Self::extract_payload(info, &current_dir)?;
                         println!("[rex] Extraction completed successfully!");
-                        return Ok(())
                     }
-                    return Err("No payload found in the executable.".into())
+                    return Ok(());
                 }
                 _ => {}
             }
         }
-        if let Some(info) = self.payload_info.take() {
-            self.run_bundled_binary(&info)
-        } else {
-            Err("No bundled payload found.".into())
-        }
+        self.payload_info.take()
+            .map_or(Ok(()), |info| self.run_bundled_binary(&info))
     }
 
     fn find_payload_info() -> Result<Option<PayloadInfo>, Box<dyn Error>> {
@@ -83,46 +79,56 @@ impl Runtime {
         let mut file = File::open(&exec)?;
         let file_size = file.metadata()?.len();
 
-        const FIXED_METADATA_SIZE: u64 = size_of::<BundleMetadata>() as u64 + MAGIC_MARKER.len() as u64;
+        const FIXED_METADATA_SIZE: u64 =
+            size_of::<BundleMetadata>() as u64 + MAGIC_MARKER.len() as u64;
         const MAX_NAME_LEN: u64 = 256;
 
-        let search_start_offset = file_size.saturating_sub(FIXED_METADATA_SIZE + MAX_NAME_LEN);
-        file.seek(SeekFrom::Start(search_start_offset))?;
+        let search_start = file_size.saturating_sub(FIXED_METADATA_SIZE + MAX_NAME_LEN);
+        file.seek(SeekFrom::Start(search_start))?;
 
-        let mut buffer = vec![0; (file_size - search_start_offset) as usize];
+        let mut buffer = vec![0u8; (file_size - search_start) as usize];
         file.read_exact(&mut buffer)?;
 
-        let marker_index = buffer.windows(MAGIC_MARKER.len()).rposition(|w| w == MAGIC_MARKER);
+        let marker_rel_index = buffer
+            .windows(MAGIC_MARKER.len())
+            .rposition(|w| w == MAGIC_MARKER);
 
-        let marker_start_in_file = match marker_index {
-            Some(index) => search_start_offset + index as u64,
+        let marker_start_in_file = match marker_rel_index {
+            Some(idx) => search_start + idx as u64,
             None => return Ok(None),
         };
 
-        let metadata_start = marker_start_in_file - size_of::<BundleMetadata>() as u64;
-        file.seek(SeekFrom::Start(metadata_start))?;
+        let metadata_start = marker_start_in_file
+            .checked_sub(size_of::<BundleMetadata>() as u64)
+            .ok_or("Invalid metadata position")?;
 
+        file.seek(SeekFrom::Start(metadata_start))?;
         let mut metadata_bytes = [0u8; size_of::<BundleMetadata>()];
         file.read_exact(&mut metadata_bytes)?;
 
-        let metadata = BundleMetadata {
-            payload_size: u64::from_le_bytes(metadata_bytes[0..8].try_into().unwrap()),
-            target_bin_name_len: u32::from_le_bytes(metadata_bytes[8..12].try_into().unwrap()),
-        };
+        let payload_size = u64::from_le_bytes(metadata_bytes[0..8].try_into().unwrap());
+        let target_name_len = u32::from_le_bytes(metadata_bytes[8..12].try_into().unwrap()) as usize;
 
-        let name_len = metadata.target_bin_name_len as usize;
-        let name_start = metadata_start.checked_sub(name_len as u64).unwrap();
+        let name_start = metadata_start
+            .checked_sub(target_name_len as u64)
+            .ok_or("Invalid target name position")?;
         file.seek(SeekFrom::Start(name_start))?;
-
-        let mut name_bytes = vec![0u8; name_len];
+        let mut name_bytes = vec![0u8; target_name_len];
         file.read_exact(&mut name_bytes)?;
-
         let target_binary_name = String::from_utf8(name_bytes)?;
+
         let payload_start_offset = file_size
-            .checked_sub(FIXED_METADATA_SIZE + name_len as u64 + metadata.payload_size)
+            .checked_sub(FIXED_METADATA_SIZE + target_name_len as u64 + payload_size)
             .ok_or("Invalid payload offset")?;
 
-        Ok(Some(PayloadInfo { metadata, payload_start_offset, target_binary_name }))
+        Ok(Some(PayloadInfo {
+            metadata: BundleMetadata {
+                payload_size,
+                target_bin_name_len: target_name_len as u32,
+            },
+            payload_start_offset,
+            target_binary_name,
+        }))
     }
 
     fn extract_payload(info: &PayloadInfo, dest_path: &Path) -> Result<(), Box<dyn Error>> {
@@ -131,8 +137,7 @@ impl Runtime {
         file.seek(SeekFrom::Start(info.payload_start_offset))?;
 
         let payload_reader = file.take(info.metadata.payload_size);
-        let decoder: Box<dyn Read> = Box::new(zstd::Decoder::new(payload_reader)?);
-
+        let decoder = zstd::Decoder::new(payload_reader)?;
         let mut archive = tar::Archive::new(decoder);
         archive.unpack(dest_path)?;
         Ok(())
@@ -150,28 +155,19 @@ impl Runtime {
 
         if !target_bin_path.exists() {
             fs::remove_dir_all(&bundle_dir).ok();
-            return Err(format!("Target binary not found in bundle: {}", target_bin_path.display()).into());
+            return Err("Target binary not found".into());
         }
 
-        #[cfg(target_os = "linux")]
-        let loader_path = {
-            let glibc_loader = libs_dir.join("ld-linux-x86-64.so.2");
-            let musl_loader = libs_dir.join("ld-musl-x86_64.so.1");
+        let loader_path = ["ld-linux-x86-64.so.2", "ld-musl-x86_64.so.1"]
+            .iter()
+            .map(|f| libs_dir.join(f))
+            .find(|p| p.exists())
+            .ok_or("No compatible loader found (ld-linux or ld-musl)")?;
 
-            if glibc_loader.exists() {
-                glibc_loader
-            } else if musl_loader.exists() {
-                musl_loader
-            } else {
-                fs::remove_dir_all(&bundle_dir).ok();
-                return Err("No compatible loader found (ld-linux or ld-musl)".into());
-            }
-        };
-
-        if cfg!(target_os = "linux") {
-            let existing_path = std::env::var("PATH").unwrap_or_default();
-            let new_path = format!("{}:{}", bin_dir.display(), existing_path);
-            unsafe { std::env::set_var("PATH", new_path); }
+        let existing_path = std::env::var("PATH").unwrap_or_default();
+        let new_path = format!("{}:{}", bin_dir.display(), existing_path);
+        unsafe {
+            std::env::set_var("PATH", new_path);
         }
 
         let args: Vec<String> = std::env::args().skip(1).collect();
@@ -182,7 +178,11 @@ impl Runtime {
         ];
         cmd_args.extend(args);
 
-        let result = Command::new(loader_path).args(&cmd_args).current_dir(bin_dir).status();
+        let result = Command::new(loader_path)
+            .args(&cmd_args)
+            .current_dir(bin_dir)
+            .status();
+
         self.executed = true;
         fs::remove_dir_all(&bundle_dir).ok();
 

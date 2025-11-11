@@ -1,8 +1,10 @@
-use fs_extra::dir::CopyOptions;
+use recursive_copy::{CopyOptions, copy_recursive};
 use rldd_rex::{ElfType, rldd_rex};
+use std::env;
 use std::error::Error;
-use std::fs::{self, File};
+use std::fs::{self, File, Permissions};
 use std::io::{self, Write};
+use std::mem::size_of;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use zstd::stream::write::Encoder;
@@ -24,203 +26,184 @@ pub struct BundleArgs {
     pub extra_bins: Vec<PathBuf>,
 }
 
-fn create_temp_dir(base_name: &str) -> Result<PathBuf, Box<dyn Error>> {
-    let path = std::env::temp_dir().join(format!("{}_bundle", base_name));
+fn recreate_dir(path: &Path) -> io::Result<()> {
     if path.exists() {
-        fs::remove_dir_all(&path)?;
+        fs::remove_dir_all(path)?;
     }
-    fs::create_dir_all(&path)?;
-    Ok(path)
+    fs::create_dir_all(path)
 }
 
-fn create_payload(path: &Path, target: &str, l: i32) -> Result<PathBuf, Box<dyn Error>> {
-    let tmp_dir = std::env::temp_dir().join(format!("{}_bundle_tmp", target));
-    if tmp_dir.exists() {
-        fs::remove_dir_all(&tmp_dir)?;
+fn collect_deps(path: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+    let deps = rldd_rex(path)?;
+    if matches!(deps.elf_type, ElfType::Invalid | ElfType::Static) {
+        return Ok(vec![]);
     }
-    fs::create_dir_all(&tmp_dir)?;
+    Ok(deps
+        .deps
+        .iter()
+        .map(|(_, p)| PathBuf::from(p))
+        .filter(|p| p.exists())
+        .collect())
+}
+
+fn create_payload(path: &Path, target: &str, level: i32) -> Result<PathBuf, Box<dyn Error>> {
+    let tmp_dir = env::temp_dir().join(format!("{target}_bundle_tmp"));
+    recreate_dir(&tmp_dir)?;
 
     let payload = tmp_dir.join(format!("{target}.tar.zstd"));
+    println!("[Packaging] Creating TAR+ZSTD (level {level}) at {}", payload.display());
+
     let file_writer = File::create(&payload)?;
-
-    println!("\n[Packaging] Starting TAR archiving and ZSTD compression (level {l}) ...",);
-
-    let mut enc = Encoder::new(file_writer, l)?;
+    let mut enc = Encoder::new(file_writer, level)?;
     enc.long_distance_matching(true)?;
     let encoder: Box<dyn Write> = Box::new(enc.auto_finish());
 
-    let bundle_dir_name = format!("{}_bundle", target);
     let mut builder = tar::Builder::new(encoder);
-    builder.append_dir_all(&bundle_dir_name, path)?;
-
+    builder.append_dir_all(format!("{target}_bundle"), path)?;
     Ok(payload)
 }
 
-fn copy_bin_and_deps(
-    file_path: &Path,
-    bin_dir: &Path,
-    libs_dir: &Path,
-) -> Result<(), Box<dyn Error>> {
-    let dest_path = bin_dir.join(file_path.file_name().unwrap());
-    fs::copy(file_path, &dest_path)?;
-    println!("[Staging] Copied binary: {}", dest_path.display());
+fn copy_bin_and_deps(file: &Path, bin_dir: &Path, libs_dir: &Path) -> Result<(), Box<dyn Error>> {
+    let dest = bin_dir.join(file.file_name().unwrap());
+    fs::copy(file, &dest)?;
+    println!("[Staging] Copied binary: {}", dest.display());
 
-    let deps = rldd_rex(file_path)?;
-    let mut unique_deps = Vec::new();
-
-    if deps.elf_type == ElfType::Static {
-        println!("binario estatico tambem");
-        return Ok(());
-    } else {
-        let paths: Vec<PathBuf> = deps
-            .deps
-            .iter()
-            .map(|(_, path)| PathBuf::from(path))
-            .filter(|p| p.exists())
-            .collect();
-        unique_deps.extend(paths);
+    let mut coptions = CopyOptions::default();
+    coptions.content_only = true;
+    coptions.follow_symlinks = true;
+    for dep in collect_deps(file)? {
+        copy_recursive(&dep, libs_dir, &coptions).ok();
     }
-
-    println!(
-        "[Staging] Copying {} dependencies for {}",
-        unique_deps.len(),
-        file_path.display()
-    );
-    let dep_refs: Vec<&Path> = unique_deps.iter().map(|p| p.as_path()).collect();
-    fs_extra::copy_items(&dep_refs, &libs_dir, &CopyOptions::new())?;
-
     Ok(())
 }
 
 pub fn generate_bundle(args: BundleArgs) -> Result<(), Box<dyn Error>> {
-    let target_binary = &args.target_binary;
-    let target_name = target_binary.file_name().unwrap().to_str().unwrap();
-    let cwd = std::env::current_dir()?;
-    let deps = rldd_rex(target_binary)?;
-    let mut final_libs = Vec::new();
+    let target = &args.target_binary;
+    let target_name = target.file_name().unwrap().to_str().unwrap();
+    let cwd = env::current_dir()?;
+    let mut coptions = CopyOptions::default();
 
-    if deps.elf_type == ElfType::Invalid {
-        return Err("nao é binario elf".into());
+    let deps = rldd_rex(target)?;
+    if matches!(deps.elf_type, ElfType::Invalid) {
+        return Err("Not ELF binary".into());
     }
-
-    if deps.elf_type == ElfType::Static {
-        println!("binario estatico");
+    if matches!(deps.elf_type, ElfType::Static) {
+        println!("[Info] Detect static binary.");
         return Ok(());
-    } else {
-        let paths: Vec<PathBuf> = deps
-            .deps
-            .iter()
-            .map(|(_, path)| PathBuf::from(path))
-            .filter(|p| p.exists())
-            .collect();
-        final_libs.extend(paths);
     }
 
-    for lib in &args.extra_libs {
-        if lib.exists() && !final_libs.contains(lib) {
-            final_libs.push(lib.clone());
-        }
-    }
+    let libs: Vec<PathBuf> = deps
+        .deps
+        .iter()
+        .map(|(_, p)| PathBuf::from(p))
+        .filter(|p| p.exists())
+        .collect();
 
-    let staging_dir = create_temp_dir(&target_name)?;
-    let root_path = staging_dir.as_path();
-    let bin_dir = root_path.join("bins");
-    let libs_dir = root_path.join("libs");
-
+    let staging_dir = env::temp_dir().join(format!("{target_name}_bundle"));
+    recreate_dir(&staging_dir)?;
+    let bin_dir = staging_dir.join("bins");
+    let libs_dir = staging_dir.join("libs");
     fs::create_dir_all(&bin_dir)?;
     fs::create_dir_all(&libs_dir)?;
 
-    println!("[Staging] Copying target binary...");
-    fs::copy(target_binary, root_path.join(target_name))?;
+    println!("[Staging] Copying target binary: {}", target.display());
+    fs::copy(target, staging_dir.join(target_name))?;
 
     if !args.extra_bins.is_empty() {
-        println!(
-            "[Staging] Processing {} extra binaries/folders...",
-            args.extra_bins.len()
-        );
+        println!("[Staging] Processing {} extra binaries...", args.extra_bins.len());
         for entry in &args.extra_bins {
             if entry.is_dir() {
-                for file in fs::read_dir(entry)? {
-                    let file_path = file?.path();
-                    if file_path.is_file() {
-                        copy_bin_and_deps(&file_path, &bin_dir, &libs_dir)?;
+                for f in fs::read_dir(entry)? {
+                    let path = f?.path();
+                    if path.is_file() {
+                        copy_bin_and_deps(&path, &bin_dir, &libs_dir)?;
                     }
                 }
-            } else if entry.is_file() {
+            } else {
                 copy_bin_and_deps(entry, &bin_dir, &libs_dir)?;
             }
         }
     }
 
-    println!(
-        "[Staging] Copying {} dynamic libraries...",
-        final_libs.len()
-    );
-    if !final_libs.is_empty() {
-        let options = CopyOptions::new();
-        let lib_paths: Vec<&Path> = final_libs.iter().map(|p| p.as_path()).collect();
-        fs_extra::copy_items(&lib_paths, &libs_dir, &options)?;
+    println!("[Staging] Copying {} shared libs...", libs.len());
+    for lib in &libs {
+        coptions.content_only = true;
+        coptions.follow_symlinks = true;
+        copy_recursive(lib, &libs_dir, &coptions).ok();
     }
 
-    let extra_paths: Vec<_> = args
-        .additional_files
-        .iter()
-        .filter_map(|e| {
-            println!("[Staging] Copying additional files...");
-            let p = cwd.join(e);
-            if p.exists() { Some(p) } else { None }
-        })
-        .collect();
-
-    if !extra_paths.is_empty() {
-        let options = CopyOptions::new();
-        let entry_refs: Vec<&Path> = extra_paths.iter().map(|p| p.as_path()).collect();
-        fs_extra::copy_items(&entry_refs, root_path, &options)?;
+    if !args.extra_libs.is_empty() {
+        println!("[Staging] Copying {} extra libs...", args.extra_libs.len());
+        for entry in &args.extra_libs {
+            coptions.follow_symlinks = false;
+            if entry.is_dir() {
+                for f in fs::read_dir(entry)? {
+                    let p = f?.path();
+                    if p.is_file() {
+                        copy_recursive(&p, &libs_dir, &coptions).ok();
+                    }
+                }
+            } else {
+                copy_recursive(entry, &libs_dir, &coptions).ok();
+            }
+        }
     }
 
-    let compress_payload_path = create_payload(root_path, &target_name, args.compression_level)?;
-    let payload_size = compress_payload_path.metadata()?.len();
-    let out = format!("{}.Rex", args.target_binary.file_name().unwrap().display());
+    for extra in &args.additional_files {
+        coptions.content_only = false;
+        let path = cwd.join(extra);
+        if !path.exists() {
+            eprintln!("[Warn] Skipping missing path: {}", path.display());
+            continue;
+        }
 
-    println!("\n[Output] Creating final bundle file: {}", out);
+        if path.is_dir() {
+            let parent_name = path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown_dir");
+            let dest = staging_dir.join(parent_name);
+            recreate_dir(&dest)?;
+            println!("[Staging] Copying directory: {}", path.display());
+            copy_recursive(&path, &dest, &coptions).ok();
+        } else {
+            println!("[Staging] Copying file: {}", path.display());
+            copy_recursive(&path, &staging_dir, &coptions).ok();
+        }
+    }
 
-    let exec = std::env::current_exe()?;
-    fs::copy(&exec, &out)?;
+    let payload = create_payload(&staging_dir, target_name, args.compression_level)?;
+    let payload_size = payload.metadata()?.len();
+    let output = format!("{}.Rex", target_name);
 
-    use std::fs::Permissions;
+    println!("[Output] Creating bundle: {}", output);
+    fs::copy(env::current_exe()?, &output)?;
+    fs::set_permissions(&output, Permissions::from_mode(0o755))?;
 
-    let perms = Permissions::from_mode(0o755);
-    fs::set_permissions(&out, perms)?;
-
-    let mut final_file = fs::OpenOptions::new().append(true).open(&out)?;
-    let mut payload_file = File::open(&compress_payload_path)?;
-
-    io::copy(&mut payload_file, &mut final_file)?;
+    let mut final_file = fs::OpenOptions::new().append(true).open(&output)?;
+    io::copy(&mut File::open(&payload)?, &mut final_file)?;
 
     let metadata = BundleMetadata {
         payload_size,
         target_bin_name_len: target_name.len() as u32,
     };
-
     final_file.write_all(target_name.as_bytes())?;
-
     let metadata_bytes = unsafe {
         std::slice::from_raw_parts(
-            &metadata as *const BundleMetadata as *const u8,
+            &metadata as *const _ as *const u8,
             size_of::<BundleMetadata>(),
         )
     };
     final_file.write_all(metadata_bytes)?;
     final_file.write_all(&MAGIC_MARKER)?;
 
-    fs::remove_file(&compress_payload_path).ok();
+    fs::remove_file(&payload).ok();
     fs::remove_dir_all(&staging_dir).ok();
 
     println!(
         "\n[Generator Success]\n  Payload Size: {payload_size} bytes\
-    \n  Metadata Size: {} bytes\n  Compressed Bundle created at: {}",
+         \n  Metadata Size: {} bytes\n  Bundle created at: {}",
         size_of::<BundleMetadata>() + target_name.len() + MAGIC_MARKER.len(),
-        out
+        output
     );
     Ok(())
 }

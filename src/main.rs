@@ -1,12 +1,13 @@
-use std::env;
-use std::path::PathBuf;
-use std::error::Error;
 use crate::runtime::Runtime;
+use std::env;
+use std::error::Error;
+use std::path::PathBuf;
 
 mod generator;
 mod runtime;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const DEFAULT_COMPRESSION: i32 = 5;
 
 struct Cli {
     target_binary: Option<PathBuf>,
@@ -19,95 +20,80 @@ struct Cli {
 impl Cli {
     fn parse() -> Result<Self, Box<dyn Error>> {
         let mut args = env::args().skip(1);
-        let mut cli = Cli {
+
+        let mut cli = Self {
             target_binary: None,
-            compression_level: 5,
-            extra_libs: Vec::new(),
-            extra_bins: Vec::new(),
-            additional_files: Vec::new(),
+            compression_level: DEFAULT_COMPRESSION,
+            extra_libs: vec![],
+            extra_bins: vec![],
+            additional_files: vec![],
         };
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "-t" | "--target-binary" => {
-                    if let Some(val) = args.next() {
-                        cli.target_binary = Some(PathBuf::from(val));
-                    } else {
-                        return Err("missing value for --target-binary".into());
-                    }
+                    cli.target_binary = Some(Self::expect_path(&mut args, "--target-binary")?)
                 }
                 "-L" | "--compression-level" => {
-                    if let Some(val) = args.next() {
-                        cli.compression_level = val.parse::<i32>()?;
-                    } else {
-                        return Err("missing value for --compression-level".into());
-                    }
+                    cli.compression_level =
+                        Self::expect_value(&mut args, "--compression-level")?.parse()?
                 }
-                "-l" | "--extra-libs" => {
-                    if let Some(val) = args.next() {
-                        cli.extra_libs.push(PathBuf::from(val));
-                    } else {
-                        return Err("missing value for --extra-libs".into());
-                    }
-                }
-                "-b" | "--extra-bins" => {
-                    if let Some(val) = args.next() {
-                        cli.extra_bins.push(PathBuf::from(val));
-                    } else {
-                        return Err("missing value for --extra-bins".into());
-                    }
-                }
-                "-a" | "--additional-files" => {
-                    if let Some(val) = args.next() {
-                        cli.additional_files.push(val);
-                    } else {
-                        return Err("missing value for --additional-files".into());
-                    }
-                }
+                "-l" | "--extra-libs" => cli
+                    .extra_libs
+                    .push(Self::expect_path(&mut args, "--extra-libs")?),
+                "-b" | "--extra-bins" => cli
+                    .extra_bins
+                    .push(Self::expect_path(&mut args, "--extra-bins")?),
+                "-f" | "--extra-files" => cli
+                    .additional_files
+                    .push(Self::expect_value(&mut args, "--extra-files")?),
                 "-h" | "--help" => {
-                    Cli::print_help();
-                    std::process::exit(0);
+                    Self::print_help();
+                    return Err("help displayed".into());
                 }
-                "-v" | "--version" => {
-                    println!("Rex version {}", VERSION);
-                    std::process::exit(0);
-                }
-                other => {
-                    eprintln!("Unknown option: {}", other);
-                    Cli::print_usage();
-                    std::process::exit(1);
-                }
+                other => return Err(format!("Unknown option: {other}").into()),
             }
         }
 
         Ok(cli)
     }
 
-    fn print_usage() {
-        println!("Usage: rex [OPTIONS]");
-        println!("Try 'rex --help' for more information.");
+    fn expect_value<I: Iterator<Item = String>>(
+        args: &mut I,
+        name: &str,
+    ) -> Result<String, Box<dyn Error>> {
+        args.next()
+            .ok_or_else(|| format!("missing value for {name}").into())
+    }
+
+    fn expect_path<I: Iterator<Item = String>>(
+        args: &mut I,
+        name: &str,
+    ) -> Result<PathBuf, Box<dyn Error>> {
+        Ok(PathBuf::from(Self::expect_value(args, name)?))
     }
 
     fn print_help() {
-        println!("Rex - Static Rust Executable Generator and Runtime");
-        println!("Version: {}", VERSION);
-        println!();
-        println!("Options:");
-        println!("  -t, --target-binary <FILE>       Path to the main target binary to bundle");
-        println!("  -L, --compression-level <NUM>    Compression level (1-22, default 5)");
-        println!("  -l, --extra-libs <FILE>          Additional libraries to include");
-        println!("  -b, --extra-bins <FILE>          Additional binaries to include");
-        println!("  -a, --additional-files <PATH>    Extra files or directories to include");
-        println!("  -v, --version                    Show version information");
-        println!("  -h, --help                       Show this help message");
+        println!(
+            r#"Rex v{VERSION} - Static Rust Executable Generator and Runtime
+
+Usage:
+  rex [OPTIONS]
+
+Options:
+  -t, --target-binary <FILE>       Path to the main target binary to bundle
+  -L, --compression-level <NUM>    Compression level (1–22, default {DEFAULT_COMPRESSION})
+  -l, --extra-libs <FILE>          Additional libraries to include
+  -b, --extra-bins <FILE>          Additional binaries to include
+  -f, --extra-files <PATH>         Extra files or directories to include
+  -h, --help                       Show this help message"#);
     }
 }
 
 fn rex_main(runtime: &mut Runtime) -> Result<(), Box<dyn Error>> {
     let args_vec: Vec<String> = env::args().collect();
-    let is_runtime = runtime.is_bundled();
 
-    if is_runtime {
+    if runtime.is_bundled() {
         return runtime.run();
     }
 
@@ -116,7 +102,12 @@ fn rex_main(runtime: &mut Runtime) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let cli = Cli::parse()?;
+    let cli = match Cli::parse() {
+        Ok(c) => c,
+        Err(e) if e.to_string().contains("displayed") => return Ok(()),
+        Err(e) => return Err(e),
+    };
+
     let args = generator::BundleArgs {
         target_binary: cli.target_binary.ok_or("missing --target-binary")?,
         compression_level: cli.compression_level,
@@ -124,26 +115,20 @@ fn rex_main(runtime: &mut Runtime) -> Result<(), Box<dyn Error>> {
         extra_bins: cli.extra_bins,
         additional_files: cli.additional_files,
     };
-    generator::generate_bundle(args).map_err(|e| e.into())
+
+    generator::generate_bundle(args)?;
+    Ok(())
 }
 
 fn main() {
-    let mut runtime = match Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            eprintln!("Error create runtime: {}", e);
-            std::process::exit(1);
-        }
-    };
-
-    let exit_code: i32 = match rex_main(&mut runtime) {
-        Ok(()) => 0,
-        Err(e) => {
-            if !runtime.has_run() {
-                eprintln!("Error: {}", e);
+    match Runtime::new() {
+        Ok(mut runtime) => {
+            if let Err(e) = rex_main(&mut runtime) {
+                if !runtime.has_run() {
+                    eprintln!("Error: {e}");
+                }
             }
-            1
         }
-    };
-    std::process::exit(exit_code);
+        Err(e) => eprintln!("Error creating runtime: {e}"),
+    }
 }

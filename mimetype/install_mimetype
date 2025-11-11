@@ -1,0 +1,20 @@
+#!/bin/bash
+# Instala tipo MIME e ícone para binários ELF com marca "REX" (offset 8)
+
+set -e
+
+MIME_DIR="/usr/share/mime/packages"
+ICON_DIR="/usr/share/icons/hicolor/512x512/mimetypes"
+XML_FILE="application-x-rex-binary.xml"
+ICON_FILE="application-x-rex-binary.png"
+
+mkdir -p "$MIME_DIR" "$ICON_DIR"
+
+cp -f "$XML_FILE" "$MIME_DIR/"
+cp -f "$ICON_FILE" "$ICON_DIR/"
+
+update-mime-database /usr/share/mime
+gtk-update-icon-cache /usr/share/icons/hicolor
+
+echo "Installation completed!"
+
