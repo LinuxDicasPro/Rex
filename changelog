@@ -1,3 +1,15 @@
+Sun Dec 14 16:04:27 -03 2025:
+    - upload version 2.0.1
+    - use rldd-rex 1.0.3
+Mon Nov 10 20:19:24 -03 2025:
+    - upload version 2.0.0
+    - optimize flags for size
+    - optimize dependencies for size
+    - add gitignore
+    - add optional mimetype
+    - add makefile
+    - replace fs-extra for recursive_copy
+    - refactory code
 Thu Oct 23 20:19:24 -03 2025:
     - upload version 1.1.0
     - refactoty code
