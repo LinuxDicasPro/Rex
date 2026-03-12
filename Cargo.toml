@@ -1,13 +1,13 @@
 [package]
 name = "Rex"
-version = "3.0.0"
+version = "3.0.1"
 edition = "2024"
 
 [dependencies]
-recursive_copy = "1.1"
-tar_minimal = "1.0"
+recursive_copy = "1.2"
+tar_minimal = "1.1"
 zstd = { version = "0.13", default-features = false }
-rldd-rex = "1.0"
+rldd_minimal = "1.1"
 
 [profile.release]
 opt-level = "z"

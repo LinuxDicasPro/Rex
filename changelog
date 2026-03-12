@@ -1,29 +1,28 @@
+Thu Mar 12 10:47:00 -03 2026:
+    - Updated the recursive_copy and tar_minimal modules to their latest versions.
+    - Transitioned the project to use rldd_minimal as the successor to the rldd-rex crate.
 Wed Feb 11 22:36:30 -03 2026:
-    - update version 3.0.0
-    - use tar_minimal crate
-    - fix bug for run loader command
-    - fix search interpreter
-    - fix and simplify help view
-    - fix search parameters
-    - fix exit code for run commands
-    - fix bug for search correct ld-linux
-    - more clean code
+    - Integrated the tar_minimal crate to handle archive operations more efficiently.
+    - Resolved a critical bug affecting the execution of the run loader command.
+    - Improved the logic responsible for searching and identifying the system interpreter.
+    - Simplified the help view interface to enhance user experience and readability.
+    - Fixed inconsistent behavior in how search parameters were being processed.
+    - Standardized exit codes across all run commands for better script integration.
+    - Fixed a bug that prevented the correct identification of the ld-linux path.
+    - Performed a general cleanup of the codebase to improve overall maintainability.
 Sun Dec 14 16:04:27 -03 2025:
-    - upload version 2.0.1
-    - use rldd-rex crate
+    - Successfully integrated the rldd-rex crate into the core dependency tree.
 Mon Nov 10 20:19:24 -03 2025:
-    - upload version 2.0.0
-    - optimize flags for size
-    - optimize dependencies for size
-    - add gitignore
-    - add optional mimetype
-    - add makefile
-    - replace fs-extra for recursive_copy
-    - refactory code
+    - Optimized compilation flags specifically to reduce the final binary size.
+    - Optimized project dependencies to minimize the total footprint.
+    - Added a .gitignore file to prevent tracking of unnecessary build artifacts.
+    - Implemented optional support for mimetype detection within the system.
+    - Created a Makefile to automate and standardize the build process.
+    - Replaced the fs-extra dependency with a custom internal recursive_copy implementation.
+    - Conducted an extensive refactor of the source code for better structure.
 Thu Oct 23 20:19:24 -03 2025:
-    - upload version 1.1.0
-    - refactoty code
-    - use only zstd
-    - remove parameters --compression --output for clean code
+    - Refactored internal logic to streamline execution flow.
+    - Standardized the project to use zstd as the exclusive compression format.
+    - Removed the --compression and --output parameters to simplify the CLI interface.
 Tue Oct 21 08:04:09 -03 2025:
-    - upload version 1.0.0
+    - Initial version of the project was established and released.

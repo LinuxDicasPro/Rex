@@ -6,11 +6,17 @@
 <h3 align="center">A high-performance, minimalist application bundler for Linux.</h3>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Size-954.6_KiB-brightgreen" alt="Size">
-  <img src="https://img.shields.io/badge/Language-Rust_2024-orange" alt="Rust">
-  <img src="https://img.shields.io/badge/Build-Makefile_/_Cargo-blue" alt="Build">
-  <img src="https://img.shields.io/badge/License-MIT-blue" alt="License">
-</p>
+    <img src="https://img.shields.io/badge/Platform-Linux-FCC624?&logo=linux&style=flat-square"/>
+    <img src="https://img.shields.io/github/actions/workflow/status/LinuxProativo/Rex/rust.yml?label=Test&style=flat-square&logo=github"/>
+    <img src="https://img.shields.io/badge/Language-Rust_2024-orange?style=flat-square&logo=rust"/>
+    <img src="https://img.shields.io/badge/RustC-1.85%2B-orange?style=flat-square&logo=rust"/>
+    <img src="https://img.shields.io/badge/Build-Makefile_/_Cargo-blue?&style=flat-square"/>
+    <img src="https://img.shields.io/github/languages/code-size/LinuxProativo/Rex?style=flat-square&logo=paperlessngx&label=Code%20Size"/>
+    <img src="https://img.shields.io/github/repo-size/LinuxProativo/Rex?style=flat-square&logo=paperlessngx&label=Repo%20Size"/>
+    <img src="https://img.shields.io/badge/Binary_Size-956.4_KiB-44cc11?style=flat-square&logo=paperlessngx"/>
+    <img src="https://img.shields.io/badge/Binary_Type-Static-success?style=flat-square&logo=chainlink&logoColor=white">
+    <img src="https://img.shields.io/github/license/LinuxProativo/Rex?color=673ab7&label=License&style=flat-square&logo=opensourcehardware&logoColor=white"/>
+</p> 
 
 ## 📖 Overview
 
@@ -60,13 +66,6 @@ the exact environment it was packaged with.
 
 **Rex** uses a `Makefile` to orchestrate optimized builds.
 
-### Requisites
-
-- 📌 Rust Stable (2024 Edition).
-- 📌 Linux environment.
-
-### Build Command
-
 ```bash
 make
 # or manually:
@@ -91,7 +90,7 @@ small binary size.
   -f ./config_folder_or_files
 ```
 
-## ⚙️ Options:
+## 📝 Options:
 
 - `-t <file>`: Target binary to bundle **(Required)**.
 
@@ -141,7 +140,7 @@ When you execute a generated `.Rex` bundle:
 
 - `--rex-extract`: Extracts the bundle into the **current directory**.
 
-> ### *Note: This flag is only available in development builds (debug assertions enabled).*
+> ### **Note:** *This flag is only available in development builds (debug assertions enabled).*
 
 ## 📂 Internal Bundle Layout
 
@@ -191,9 +190,17 @@ using the `target` name provided in the appended metadata.
 - 🛑 Feature creep that increases binary size will be rejected
   to maintain the sub-1MB goal.
 
-## 📜 License
+## 📜 MIT License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
+This repository has scripts that were created to be free software.  
+Therefore, they can be distributed and/or modified within the terms of the ***MIT License***.
+
+> ### See the [MIT License](LICENSE) file for details.
+
+## 📬 Contact & Support
+
+* 📧 **Email:** [m10ferrari1200@gmail.com](mailto:m10ferrari1200@gmail.com)
+* 📧 **Email:** [contatolinuxdicaspro@gmail.com](mailto:contatolinuxdicaspro@gmail.com)
 
 <p align="center">
   <i>Developed with precision in Rust. 🦖</i>

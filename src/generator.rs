@@ -1,5 +1,5 @@
 use recursive_copy::{CopyOptions, copy_recursive};
-use rldd_rex::{ElfType, rldd_rex};
+use rldd_minimal::{ElfType, rldd_rex};
 use std::env;
 use std::error::Error;
 use std::fs::{self, File, Permissions};
