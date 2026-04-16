@@ -1,5 +1,5 @@
 use recursive_copy::{CopyOptions, copy_recursive};
-use rldd_minimal::{ElfType, rldd_rex};
+use rldd_minimal::{ElfType, rldd_minimal};
 use std::env;
 use std::error::Error;
 use std::fs::{self, File, Permissions};
@@ -34,7 +34,7 @@ fn recreate_dir(path: &Path) -> io::Result<()> {
 }
 
 fn collect_deps(path: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
-    let deps = rldd_rex(path)?;
+    let deps = rldd_minimal(path)?;
     if matches!(deps.elf_type, ElfType::Invalid | ElfType::Static) {
         return Ok(vec![]);
     }
@@ -79,7 +79,7 @@ fn copy_bin_and_deps(file: &Path, bin_dir: &Path, libs_dir: &Path) -> Result<(),
 
 pub fn generate_bundle(args: BundleArgs) -> Result<(), Box<dyn Error>> {
     let target = &args.target_binary;
-    let deps = rldd_rex(target)?;
+    let deps = rldd_minimal(target)?;
 
     if matches!(deps.elf_type, ElfType::Invalid | ElfType::Static) {
         return Err("Not Shared ELF binary".into());

@@ -1,3 +1,5 @@
+Thu Apr 16 09:29:29 -03 2026:
+    - Updated the recursive_copy and rldd_minimal modules to their latest versions.
 Thu Mar 12 10:47:00 -03 2026:
     - Updated the recursive_copy and tar_minimal modules to their latest versions.
     - Transitioned the project to use rldd_minimal as the successor to the rldd-rex crate.

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" width="280">
+  <img src="logo.png" width="300"/>
 </p>
 
 <h1 align="center">🦖 Rex - Static Rust Executable Generator and Runtime</h1> 
@@ -168,7 +168,7 @@ using the `target` name provided in the appended metadata.
   Rex is natively configured for the `x86_64-unknown-linux-musl` target. Using Rex
   in a **musl-based environment (such as Alpine Linux)** to package your apps (`-t`) 
   yields superior results. Since musl libraries are significantly more lightweight
-  than glibc, the resulting bundled payload is much smaller and the runtime remains
+  than glibc, the resulting bundled payload is much smaller, and the runtime remains
   completely static with zero reliance on the host.
 
 - **Execution Overhead** ⏳  
@@ -192,7 +192,7 @@ using the `target` name provided in the appended metadata.
 
 ## 📜 MIT License
 
-This repository has scripts that were created to be free software.  
+This repository has scripts created to be free software.  
 Therefore, they can be distributed and/or modified within the terms of the ***MIT License***.
 
 > ### See the [MIT License](LICENSE) file for details.
